@@ -398,7 +398,8 @@ function loadFile(file) {
   const url = URL.createObjectURL(file);
   const im = new Image();
   im.onload = () => {
-    URL.revokeObjectURL(url);
+    if (window._logoUrl) URL.revokeObjectURL(window._logoUrl);
+    window._logoUrl = url;   // keep alive while in use; freed on next upload
     img = im;
     crop = { x: 0, y: 0, w: im.naturalWidth, h: im.naturalHeight };
     pos = { x: CONFIG.circle.cx, y: CONFIG.circle.cy };
