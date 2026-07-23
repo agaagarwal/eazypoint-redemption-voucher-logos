@@ -55,6 +55,16 @@
     cursor: grab;
   }
   #canvas.dragging { cursor: grabbing; }
+  #canvas.picking { cursor: crosshair; }
+  input[type=color] {
+    width: 40px;
+    height: 36px;
+    padding: 2px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    cursor: pointer;
+  }
   #dropHint {
     position: absolute;
     inset: 0;
@@ -176,23 +186,39 @@
       </div>
 
       <div>
+        <h2>Handles</h2>
+        <div class="row" style="margin-top:8px">
+          <button id="resizeModeBtn" class="primary">Resize</button>
+          <button id="cropModeBtn">Crop</button>
+        </div>
+        <p class="hint" style="margin-top:8px" id="modeHint">Resize mode: drag a corner or edge bar to scale the logo proportionally.</p>
+      </div>
+
+      <div>
         <h2>Position</h2>
         <div class="row" style="margin-top:8px">
           <button id="centerBtn" disabled>Center</button>
           <button id="fitBtn" disabled>Fit</button>
           <button id="fillBtn" disabled>Fill circle</button>
           <button id="resetCropBtn" disabled>Reset crop</button>
+          <button id="resetAllBtn" disabled>Reset image</button>
         </div>
-        <p class="hint" style="margin-top:8px">Drag the corner squares to resize. Drag the edge bars to crop that side — drag them back outward to undo. Drag anywhere inside to move. Faded areas outside the circle will be cut off.</p>
+        <p class="hint" style="margin-top:8px">Drag anywhere inside to move. Faded areas outside the circle will be cut off.</p>
       </div>
 
       <div>
         <h2>Background inside circle</h2>
-        <select id="bgSel" style="margin-top:8px">
-          <option value="transparent">Transparent</option>
-          <option value="#ffffff">White</option>
-          <option value="#000000">Black</option>
-        </select>
+        <div class="row" style="margin-top:8px">
+          <select id="bgSel">
+            <option value="transparent">Transparent</option>
+            <option value="#ffffff">White</option>
+            <option value="#000000">Black</option>
+            <option value="custom">Custom</option>
+          </select>
+          <input type="color" id="bgColorIn" value="#ffffff" style="display:none">
+          <button id="pickBgBtn" disabled>Pick from logo</button>
+        </div>
+        <p class="hint" style="margin-top:8px" id="pickHint">&nbsp;</p>
       </div>
 
       <div class="divider"></div>
@@ -233,9 +259,21 @@ let img = null, imgName = 'logo';
 let crop = { x: 0, y: 0, w: 0, h: 0 };       // source-pixel crop of the uploaded image
 let pos = { x: CONFIG.circle.cx, y: CONFIG.circle.cy }; // centre of the logo in output px
 let drawW = 0, drawH = 0;                     // logo size in output px
+let mode = 'resize';                          // 'resize' or 'crop' — controls what the corner handles do
+let picking = false;                          // true while waiting for a click to sample a color
+let sampleCanvas = null;                      // offscreen full-res copy of the logo, for color sampling
+
+let initial = null; // snapshot of crop/pos/size right after upload, for "Reset image"
 
 const $ = id => document.getElementById(id);
-const controls = ['wIn','hIn','centerBtn','fitBtn','fillBtn','resetCropBtn','downloadBtn'];
+const controls = ['wIn','hIn','centerBtn','fitBtn','fillBtn','resetCropBtn','resetAllBtn','pickBgBtn','downloadBtn'];
+
+function getBgColor() {
+  const v = $('bgSel').value;
+  if (v === 'transparent') return null;
+  if (v === 'custom') return $('bgColorIn').value;
+  return v;
+}
 
 function circlePath(c) {
   c.beginPath();
@@ -287,8 +325,8 @@ function draw() {
   ctx.save();
   circlePath(ctx);
   ctx.clip();
-  const bg = $('bgSel').value;
-  if (bg !== 'transparent') { ctx.fillStyle = bg; ctx.fill(); }
+  const bg = getBgColor();
+  if (bg) { ctx.fillStyle = bg; ctx.fill(); }
   if (img) drawLogo(ctx);
   if (templateImg) ctx.drawImage(templateImg, 0, 0, CONFIG.width, CONFIG.height);
   ctx.restore();
@@ -324,13 +362,16 @@ function drawPlaceHandles() {
   ctx.lineWidth = 2.5;
   ctx.strokeRect(L, T, R - L, B - T);
 
-  ctx.fillStyle = '#fff';
+  const handleColor = mode === 'crop' ? '#ff4d5a' : '#fff';
+  ctx.fillStyle = handleColor;
   ctx.strokeStyle = 'rgba(0,0,0,.45)';
   ctx.lineWidth = 2;
   for (const [x, y] of [[L, T], [R, T], [L, B], [R, B]]) {
     ctx.fillRect(x - CORNER / 2, y - CORNER / 2, CORNER, CORNER);
     ctx.strokeRect(x - CORNER / 2, y - CORNER / 2, CORNER, CORNER);
   }
+
+  ctx.fillStyle = handleColor;
   const bars = [
     [(L + R) / 2, T, EDGE_LONG, EDGE_THICK], [(L + R) / 2, B, EDGE_LONG, EDGE_THICK],
     [L, (T + B) / 2, EDGE_THICK, EDGE_LONG], [R, (T + B) / 2, EDGE_THICK, EDGE_LONG]
@@ -378,34 +419,72 @@ function cornerResize(h, p) {
   pos.y = ay + dirY * drawH / 2;
 }
 
-function edgeCrop(h, p) {
-  const MIN = 12;                // min crop size in source px
-  const sx = drag.w0 / drag.crop0.w, sy = drag.h0 / drag.crop0.h;
+function edgeResize(h, p) {
+  // same proportional scaling as a corner, pinned to the opposite edge —
+  // the perpendicular center stays put since only one axis is dragged
   const L0 = drag.pos0.x - drag.w0 / 2, R0 = drag.pos0.x + drag.w0 / 2;
   const T0 = drag.pos0.y - drag.h0 / 2, B0 = drag.pos0.y + drag.h0 / 2;
-  if (h === 'e') {
-    const wSrc = Math.min(Math.max(MIN, (p.x - L0) / sx), img.naturalWidth - drag.crop0.x);
-    crop = { ...drag.crop0, w: wSrc };
-    drawW = wSrc * sx;
-    pos.x = L0 + drawW / 2;
-  } else if (h === 'w') {
-    const right = drag.crop0.x + drag.crop0.w;
-    const xSrc = Math.min(Math.max(0, drag.crop0.x + (p.x - L0) / sx), right - MIN);
-    crop = { ...drag.crop0, x: xSrc, w: right - xSrc };
-    drawW = crop.w * sx;
-    pos.x = R0 - drawW / 2;
-  } else if (h === 's') {
-    const hSrc = Math.min(Math.max(MIN, (p.y - T0) / sy), img.naturalHeight - drag.crop0.y);
-    crop = { ...drag.crop0, h: hSrc };
-    drawH = hSrc * sy;
-    pos.y = T0 + drawH / 2;
-  } else if (h === 'n') {
-    const bottom = drag.crop0.y + drag.crop0.h;
-    const ySrc = Math.min(Math.max(0, drag.crop0.y + (p.y - T0) / sy), bottom - MIN);
-    crop = { ...drag.crop0, y: ySrc, h: bottom - ySrc };
-    drawH = crop.h * sy;
-    pos.y = B0 - drawH / 2;
+  let f;
+  if (h === 'e') f = Math.max(12, p.x - L0) / drag.w0;
+  else if (h === 'w') f = Math.max(12, R0 - p.x) / drag.w0;
+  else if (h === 's') f = Math.max(12, p.y - T0) / drag.h0;
+  else f = Math.max(12, B0 - p.y) / drag.h0; // 'n'
+  drawW = drag.w0 * f;
+  drawH = drag.h0 * f;
+  if (h === 'e') { pos.x = L0 + drawW / 2; pos.y = drag.pos0.y; }
+  else if (h === 'w') { pos.x = R0 - drawW / 2; pos.y = drag.pos0.y; }
+  else if (h === 's') { pos.y = T0 + drawH / 2; pos.x = drag.pos0.x; }
+  else { pos.y = B0 - drawH / 2; pos.x = drag.pos0.x; }
+}
+
+const CROP_MIN = 12; // min crop size in source px
+
+function cropAxisX(side, p) {
+  const sx = drag.w0 / drag.crop0.w;
+  const L0 = drag.pos0.x - drag.w0 / 2, R0 = drag.pos0.x + drag.w0 / 2;
+  if (side === 'e') {
+    const wSrc = Math.min(Math.max(CROP_MIN, (p.x - L0) / sx), img.naturalWidth - drag.crop0.x);
+    return { x: drag.crop0.x, w: wSrc, drawW: wSrc * sx, posX: L0 + wSrc * sx / 2 };
   }
+  const right = drag.crop0.x + drag.crop0.w;
+  const xSrc = Math.min(Math.max(0, drag.crop0.x + (p.x - L0) / sx), right - CROP_MIN);
+  const w = right - xSrc;
+  return { x: xSrc, w, drawW: w * sx, posX: R0 - w * sx / 2 };
+}
+
+function cropAxisY(side, p) {
+  const sy = drag.h0 / drag.crop0.h;
+  const T0 = drag.pos0.y - drag.h0 / 2, B0 = drag.pos0.y + drag.h0 / 2;
+  if (side === 's') {
+    const hSrc = Math.min(Math.max(CROP_MIN, (p.y - T0) / sy), img.naturalHeight - drag.crop0.y);
+    return { y: drag.crop0.y, h: hSrc, drawH: hSrc * sy, posY: T0 + hSrc * sy / 2 };
+  }
+  const bottom = drag.crop0.y + drag.crop0.h;
+  const ySrc = Math.min(Math.max(0, drag.crop0.y + (p.y - T0) / sy), bottom - CROP_MIN);
+  const h = bottom - ySrc;
+  return { y: ySrc, h, drawH: h * sy, posY: B0 - h * sy / 2 };
+}
+
+function edgeCrop(h, p) {
+  if (h === 'e' || h === 'w') {
+    const r = cropAxisX(h, p);
+    crop = { ...crop, x: r.x, w: r.w };
+    drawW = r.drawW;
+    pos.x = r.posX;
+  } else {
+    const r = cropAxisY(h, p);
+    crop = { ...crop, y: r.y, h: r.h };
+    drawH = r.drawH;
+    pos.y = r.posY;
+  }
+}
+
+function cornerCrop(h, p) {
+  const rx = cropAxisX(h.includes('w') ? 'w' : 'e', p);
+  const ry = cropAxisY(h.includes('n') ? 'n' : 's', p);
+  crop = { x: rx.x, w: rx.w, y: ry.y, h: ry.h };
+  drawW = rx.drawW; drawH = ry.drawH;
+  pos.x = rx.posX; pos.y = ry.posY;
 }
 
 /* ===== Image loading ===== */
@@ -422,6 +501,11 @@ function loadFile(file) {
     pos = { x: CONFIG.circle.cx, y: CONFIG.circle.cy };
     drawW = fitScaleW() * 0.8;
     drawH = drawW * crop.h / crop.w;
+    initial = { crop: { ...crop }, pos: { ...pos }, drawW, drawH };
+    sampleCanvas = document.createElement('canvas');
+    sampleCanvas.width = im.naturalWidth;
+    sampleCanvas.height = im.naturalHeight;
+    sampleCanvas.getContext('2d').drawImage(im, 0, 0);
     controls.forEach(id => $(id).disabled = false);
     $('dropHint').style.display = 'none';
     syncInputs();
@@ -452,6 +536,18 @@ $('hIn').onchange = e => {
   if ($('lock').checked) drawW = v * drawW / drawH;
   drawH = v; syncInputs(); draw();
 };
+function setMode(m) {
+  mode = m;
+  $('resizeModeBtn').classList.toggle('primary', m === 'resize');
+  $('cropModeBtn').classList.toggle('primary', m === 'crop');
+  $('modeHint').textContent = m === 'crop'
+    ? 'Crop mode: drag a corner or edge bar to trim into the logo. Drag back outward to undo.'
+    : 'Resize mode: drag a corner or edge bar to scale the logo proportionally.';
+  draw();
+}
+$('resizeModeBtn').onclick = () => setMode('resize');
+$('cropModeBtn').onclick = () => setMode('crop');
+
 $('centerBtn').onclick = () => { pos = { x: CONFIG.circle.cx, y: CONFIG.circle.cy }; draw(); };
 $('fitBtn').onclick = () => {
   pos = { x: CONFIG.circle.cx, y: CONFIG.circle.cy };
@@ -465,13 +561,49 @@ $('fillBtn').onclick = () => {
   drawW = crop.w * k; drawH = drawW * ratio;
   syncInputs(); draw();
 };
-$('bgSel').onchange = draw;
+function updateBgUI() {
+  $('bgColorIn').style.display = $('bgSel').value === 'custom' ? 'inline-block' : 'none';
+}
+$('bgSel').onchange = () => { updateBgUI(); draw(); };
+$('bgColorIn').oninput = () => { $('bgSel').value = 'custom'; updateBgUI(); draw(); };
+
+function setPicking(v) {
+  picking = v;
+  canvas.classList.toggle('picking', picking);
+  $('pickBgBtn').classList.toggle('primary', picking);
+  $('pickHint').innerHTML = picking ? 'Click anywhere on the logo to sample that color.' : '&nbsp;';
+}
+$('pickBgBtn').onclick = () => setPicking(!picking);
+
+function pickColorAt(p) {
+  const { L, T } = imgRect();
+  const relX = (p.x - L) / drawW, relY = (p.y - T) / drawH;
+  if (relX < 0 || relX > 1 || relY < 0 || relY > 1) return; // clicked outside the logo
+  const srcX = Math.min(img.naturalWidth - 1, Math.max(0, Math.floor(crop.x + relX * crop.w)));
+  const srcY = Math.min(img.naturalHeight - 1, Math.max(0, Math.floor(crop.y + relY * crop.h)));
+  const [r, g, b] = sampleCanvas.getContext('2d').getImageData(srcX, srcY, 1, 1).data;
+  const hex = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+  $('bgColorIn').value = hex;
+  $('bgSel').value = 'custom';
+  updateBgUI();
+  setPicking(false);
+  draw();
+}
 
 $('resetCropBtn').onclick = () => {
   const sx = drawW / crop.w, sy = drawH / crop.h;   // keep on-screen scale
   crop = { x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight };
   drawW = crop.w * sx;
   drawH = crop.h * sy;
+  syncInputs();
+  draw();
+};
+
+$('resetAllBtn').onclick = () => {
+  crop = { ...initial.crop };
+  pos = { ...initial.pos };
+  drawW = initial.drawW;
+  drawH = initial.drawH;
   syncInputs();
   draw();
 };
@@ -490,8 +622,9 @@ function canvasPoint(e) {
 
 canvas.addEventListener('pointerdown', e => {
   if (!img) return;
-  canvas.setPointerCapture(e.pointerId);
   const p = canvasPoint(e);
+  if (picking) { pickColorAt(p); return; }
+  canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, p);
   canvas.classList.add('dragging');
   if (pointers.size === 1) {
@@ -530,9 +663,11 @@ canvas.addEventListener('pointermove', e => {
     pos.x += p.x - prev.x;
     pos.y += p.y - prev.y;
   } else if (drag.handle.length === 2) {
-    cornerResize(drag.handle, p);
+    if (mode === 'crop') cornerCrop(drag.handle, p);
+    else cornerResize(drag.handle, p);
   } else {
-    edgeCrop(drag.handle, p);
+    if (mode === 'crop') edgeCrop(drag.handle, p);
+    else edgeResize(drag.handle, p);
   }
   syncInputs();
   draw();
@@ -562,10 +697,9 @@ $('downloadBtn').onclick = () => {
   x.save();
   circlePath(x);
   x.clip();
-  const bg = $('bgSel').value;
-  if (bg !== 'transparent') { x.fillStyle = bg; x.fill(); }
+  const bg = getBgColor();
+  if (bg) { x.fillStyle = bg; x.fill(); }
   drawLogo(x);
-  if (templateImg) x.drawImage(templateImg, 0, 0, CONFIG.width, CONFIG.height);
   x.restore();
   c.toBlob(blob => {
     const a = document.createElement('a');
