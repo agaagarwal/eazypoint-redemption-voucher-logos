@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>EazyPoint Voucher Logo Tool</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #101418;
+    --panel: #1a2027;
+    --panel-2: #232b34;
+    --text: #eef2f6;
+    --muted: #93a1b0;
+    --accent: #ff4d5a;
+    --accent-2: #ff6b76;
+    --line: #2d3946;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+  }
+  header {
+    padding: 18px 24px 14px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 18px; font-weight: 700; letter-spacing: .2px; }
+  header p { color: var(--muted); font-size: 13px; }
+  .wrap {
+    display: flex;
+    gap: 20px;
+    padding: 20px;
+    max-width: 1100px;
+    margin: 0 auto;
+    align-items: flex-start;
+  }
+  .stage {
+    flex: 1 1 60%;
+    min-width: 0;
+    position: relative;
+  }
+  #canvas {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 12px;
+    background: var(--panel);
+    touch-action: none;
+    cursor: grab;
+  }
+  #canvas.dragging { cursor: grabbing; }
+  #dropHint {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--muted);
+    font-size: 15px;
+    pointer-events: none;
+    text-align: center;
+    padding: 20px;
+  }
+  #dropHint svg { opacity: .6; }
+  .panel {
+    flex: 1 1 40%;
+    max-width: 380px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); font-weight: 600; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 9px 14px;
+    font-size: 14px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background .15s;
+  }
+  button:hover { background: #2b3540; }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  button.primary:hover { background: var(--accent-2); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  input[type=number] {
+    width: 84px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 14px;
+    font-family: inherit;
+  }
+  label.small { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+  .check { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); cursor: pointer; user-select: none; }
+  .check input { accent-color: var(--accent); }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .divider { height: 1px; background: var(--line); }
+  select {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  #placeBar { display: flex; flex-direction: column; gap: 16px; }
+  #cropBar { display: none; }
+  body.cropping #placeBar { display: none; }
+  body.cropping #cropBar { display: flex; flex-direction: column; gap: 16px; }
+  @media (max-width: 760px) {
+    .wrap { flex-direction: column; }
+    .panel { max-width: none; width: 100%; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>EazyPoint Voucher Logo Tool</h1>
+  <p>Upload a logo, position it inside the circle, download the finished file.</p>
+</header>
+
+<div class="wrap">
+  <div class="stage">
+    <canvas id="canvas"></canvas>
+    <div id="dropHint">
+      <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+        <path d="M12 16V4m0 0 4 4m-4-4L8 8" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke-linecap="round"/>
+      </svg>
+      <span><b>Tap to upload</b> or drag &amp; drop a logo here<br>PNG, JPG, SVG or WEBP</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div id="placeBar">
+      <div class="row">
+        <button id="uploadBtn" class="primary">Upload logo</button>
+        <button id="cropBtn" disabled>Crop</button>
+      </div>
+
+      <div>
+        <h2>Size</h2>
+        <input type="range" id="scale" min="5" max="300" value="100" step="1" disabled>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label class="small" for="wIn">Width (px)</label>
+            <input type="number" id="wIn" min="1" disabled>
+          </div>
+          <div>
+            <label class="small" for="hIn">Height (px)</label>
+            <input type="number" id="hIn" min="1" disabled>
+          </div>
+        </div>
+        <label class="check" style="margin-top:10px">
+          <input type="checkbox" id="lock" checked> Keep proportions
+        </label>
+      </div>
+
+      <div>
+        <h2>Position</h2>
+        <div class="row" style="margin-top:8px">
+          <button id="centerBtn" disabled>Center</button>
+          <button id="fitBtn" disabled>Fit</button>
+          <button id="fillBtn" disabled>Fill circle</button>
+        </div>
+        <p class="hint" style="margin-top:8px">Drag the logo to move it. Pinch or use the slider to resize. Faded areas outside the circle will be cut off.</p>
+      </div>
+
+      <div>
+        <h2>Background inside circle</h2>
+        <select id="bgSel" style="margin-top:8px">
+          <option value="transparent">Transparent</option>
+          <option value="#ffffff">White</option>
+          <option value="#000000">Black</option>
+        </select>
+      </div>
+
+      <div class="divider"></div>
+      <button id="downloadBtn" class="primary" disabled>Download PNG</button>
+    </div>
+
+    <div id="cropBar">
+      <h2>Crop image</h2>
+      <p class="hint">Drag the corners or edges of the box to crop. Drag inside the box to move it.</p>
+      <div class="row">
+        <button id="cropApply" class="primary">Apply crop</button>
+        <button id="cropReset">Reset</button>
+        <button id="cropCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileIn" accept="image/*" hidden>
+
+<script>
+/* ===== Template configuration =====
+   Replace template.png with the real circular template file.
+   Everything outside the circle below is clipped in the preview
+   AND in the downloaded file. */
+const CONFIG = {
+  width: 1080,
+  height: 1080,
+  circle: { cx: 540, cy: 540, r: 540 },
+  templateSrc: 'template.png'
+};
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+canvas.width = CONFIG.width;
+canvas.height = CONFIG.height;
+
+let templateImg = null;
+(function loadTemplate() {
+  const t = new Image();
+  t.onload = () => { templateImg = t; draw(); };
+  t.onerror = () => {};
+  t.src = CONFIG.templateSrc;
+})();
+
+/* ===== State ===== */
+let img = null, imgName = 'logo';
+let crop = { x: 0, y: 0, w: 0, h: 0 };       // source-pixel crop of the uploaded image
+let pos = { x: CONFIG.circle.cx, y: CONFIG.circle.cy }; // centre of the logo in output px
+let drawW = 0, drawH = 0;                     // logo size in output px
+let cropping = false;
+let tcrop = null;                             // crop rect being edited in crop mode
+
+const $ = id => document.getElementById(id);
+const controls = ['scale','wIn','hIn','cropBtn','centerBtn','fitBtn','fillBtn','downloadBtn'];
+
+function circlePath(c) {
+  c.beginPath();
+  c.arc(CONFIG.circle.cx, CONFIG.circle.cy, CONFIG.circle.r, 0, Math.PI * 2);
+}
+
+function fitScaleW() { // width at which the crop fits inside the circle (slider = 100%)
+  const d = CONFIG.circle.r * 2;
+  const k = Math.min(d / crop.w, d / crop.h);
+  return crop.w * k;
+}
+
+function setScalePercent(v) {
+  const ratio = drawH / drawW;
+  drawW = Math.max(1, fitScaleW() * v / 100);
+  drawH = Math.max(1, drawW * ratio);
+}
+
+function syncInputs() {
+  $('wIn').value = Math.round(drawW);
+  $('hIn').value = Math.round(drawH);
+  $('scale').value = Math.min(300, Math.max(5, Math.round(drawW / fitScaleW() * 100)));
+}
+
+/* ===== Drawing ===== */
+function drawChecker(c) {
+  const s = 30;
+  for (let y = 0; y < CONFIG.height; y += s)
+    for (let x = 0; x < CONFIG.width; x += s) {
+      c.fillStyle = ((x + y) / s) % 2 ? '#1c232b' : '#222b35';
+      c.fillRect(x, y, s, s);
+    }
+}
+
+function drawLogo(c) {
+  c.drawImage(img, crop.x, crop.y, crop.w, crop.h,
+    pos.x - drawW / 2, pos.y - drawH / 2, drawW, drawH);
+}
+
+function draw() {
+  if (cropping) { drawCropMode(); return; }
+  ctx.clearRect(0, 0, CONFIG.width, CONFIG.height);
+  drawChecker(ctx);
+
+  if (img) {
+    ctx.globalAlpha = 0.22;            // ghost of what falls outside the circle
+    drawLogo(ctx);
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.save();
+  circlePath(ctx);
+  ctx.clip();
+  const bg = $('bgSel').value;
+  if (bg !== 'transparent') { ctx.fillStyle = bg; ctx.fill(); }
+  if (img) drawLogo(ctx);
+  if (templateImg) ctx.drawImage(templateImg, 0, 0, CONFIG.width, CONFIG.height);
+  ctx.restore();
+
+  ctx.save();
+  circlePath(ctx);
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = templateImg ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.75)';
+  ctx.setLineDash([16, 12]);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/* ===== Crop mode ===== */
+function cropLayout() {
+  const pad = 90;
+  const k = Math.min((CONFIG.width - pad * 2) / img.naturalWidth,
+                     (CONFIG.height - pad * 2) / img.naturalHeight);
+  return {
+    k,
+    ox: (CONFIG.width - img.naturalWidth * k) / 2,
+    oy: (CONFIG.height - img.naturalHeight * k) / 2
+  };
+}
+
+function drawCropMode() {
+  const { k, ox, oy } = cropLayout();
+  ctx.clearRect(0, 0, CONFIG.width, CONFIG.height);
+  ctx.fillStyle = '#141a20';
+  ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
+  ctx.drawImage(img, ox, oy, img.naturalWidth * k, img.naturalHeight * k);
+
+  const rx = ox + tcrop.x * k, ry = oy + tcrop.y * k, rw = tcrop.w * k, rh = tcrop.h * k;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, CONFIG.width, CONFIG.height);
+  ctx.rect(rx, ry, rw, rh);
+  ctx.fillStyle = 'rgba(0,0,0,.55)';
+  ctx.fill('evenodd');
+  ctx.restore();
+
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(rx, ry, rw, rh);
+  ctx.fillStyle = '#fff';
+  for (const [hx, hy] of cropHandles(rx, ry, rw, rh))
+    ctx.fillRect(hx - 14, hy - 14, 28, 28);
+}
+
+function cropHandles(rx, ry, rw, rh) {
+  return [
+    [rx, ry], [rx + rw / 2, ry], [rx + rw, ry],
+    [rx, ry + rh / 2], [rx + rw, ry + rh / 2],
+    [rx, ry + rh], [rx + rw / 2, ry + rh], [rx + rw, ry + rh]
+  ];
+}
+const HANDLE_KEYS = ['nw','n','ne','w','e','sw','s','se'];
+
+function hitCropHandle(p) {
+  const { k, ox, oy } = cropLayout();
+  const rx = ox + tcrop.x * k, ry = oy + tcrop.y * k, rw = tcrop.w * k, rh = tcrop.h * k;
+  const hs = cropHandles(rx, ry, rw, rh);
+  for (let i = 0; i < hs.length; i++) {
+    if (Math.abs(p.x - hs[i][0]) < 34 && Math.abs(p.y - hs[i][1]) < 34) return HANDLE_KEYS[i];
+  }
+  if (p.x > rx && p.x < rx + rw && p.y > ry && p.y < ry + rh) return 'move';
+  return null;
+}
+
+function applyCropDrag(handle, dxImg, dyImg) {
+  const W = img.naturalWidth, H = img.naturalHeight, MIN = 12;
+  let { x, y, w, h } = tcrop;
+  if (handle === 'move') {
+    x = Math.min(Math.max(0, x + dxImg), W - w);
+    y = Math.min(Math.max(0, y + dyImg), H - h);
+  } else {
+    if (handle.includes('w')) { const nx = Math.min(Math.max(0, x + dxImg), x + w - MIN); w += x - nx; x = nx; }
+    if (handle.includes('e')) { w = Math.min(Math.max(MIN, w + dxImg), W - x); }
+    if (handle.includes('n')) { const ny = Math.min(Math.max(0, y + dyImg), y + h - MIN); h += y - ny; y = ny; }
+    if (handle.includes('s')) { h = Math.min(Math.max(MIN, h + dyImg), H - y); }
+  }
+  tcrop = { x, y, w, h };
+}
+
+/* ===== Image loading ===== */
+function loadFile(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  imgName = (file.name || 'logo').replace(/\.[^.]+$/, '');
+  const url = URL.createObjectURL(file);
+  const im = new Image();
+  im.onload = () => {
+    URL.revokeObjectURL(url);
+    img = im;
+    crop = { x: 0, y: 0, w: im.naturalWidth, h: im.naturalHeight };
+    pos = { x: CONFIG.circle.cx, y: CONFIG.circle.cy };
+    drawW = fitScaleW() * 0.8;
+    drawH = drawW * crop.h / crop.w;
+    controls.forEach(id => $(id).disabled = false);
+    $('dropHint').style.display = 'none';
+    syncInputs();
+    draw();
+  };
+  im.src = url;
+}
+
+$('uploadBtn').onclick = () => $('fileIn').click();
+$('fileIn').onchange = e => loadFile(e.target.files[0]);
+canvas.addEventListener('click', () => { if (!img) $('fileIn').click(); });
+
+['dragover','drop'].forEach(ev => document.addEventListener(ev, e => e.preventDefault()));
+document.addEventListener('drop', e => loadFile(e.dataTransfer.files[0]));
+document.addEventListener('paste', e => {
+  const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+  if (item) loadFile(item.getAsFile());
+});
+
+/* ===== Controls ===== */
+$('scale').oninput = e => { setScalePercent(+e.target.value); syncInputs(); draw(); };
+$('wIn').onchange = e => {
+  const v = Math.max(1, +e.target.value || 1);
+  if ($('lock').checked) drawH = v * drawH / drawW;
+  drawW = v; syncInputs(); draw();
+};
+$('hIn').onchange = e => {
+  const v = Math.max(1, +e.target.value || 1);
+  if ($('lock').checked) drawW = v * drawW / drawH;
+  drawH = v; syncInputs(); draw();
+};
+$('centerBtn').onclick = () => { pos = { x: CONFIG.circle.cx, y: CONFIG.circle.cy }; draw(); };
+$('fitBtn').onclick = () => {
+  pos = { x: CONFIG.circle.cx, y: CONFIG.circle.cy };
+  setScalePercent(100); syncInputs(); draw();
+};
+$('fillBtn').onclick = () => {
+  pos = { x: CONFIG.circle.cx, y: CONFIG.circle.cy };
+  const d = CONFIG.circle.r * 2;
+  const k = Math.max(d / crop.w, d / crop.h);
+  const ratio = drawH / drawW;
+  drawW = crop.w * k; drawH = drawW * ratio;
+  syncInputs(); draw();
+};
+$('bgSel').onchange = draw;
+
+$('cropBtn').onclick = () => {
+  cropping = true;
+  tcrop = { ...crop };
+  document.body.classList.add('cropping');
+  draw();
+};
+function exitCrop() {
+  cropping = false;
+  document.body.classList.remove('cropping');
+  draw();
+}
+$('cropCancel').onclick = exitCrop;
+$('cropReset').onclick = () => { tcrop = { x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight }; draw(); };
+$('cropApply').onclick = () => {
+  crop = { ...tcrop };
+  const pct = +$('scale').value;
+  drawH = drawW * crop.h / crop.w;   // re-derive aspect from the new crop
+  setScalePercent(pct);
+  exitCrop();
+  syncInputs();
+};
+
+/* ===== Pointer interaction ===== */
+const pointers = new Map();
+let dragHandle = null;
+
+function canvasPoint(e) {
+  const r = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) * canvas.width / r.width,
+    y: (e.clientY - r.top) * canvas.height / r.height
+  };
+}
+
+canvas.addEventListener('pointerdown', e => {
+  if (!img) return;
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, canvasPoint(e));
+  canvas.classList.add('dragging');
+  if (cropping && pointers.size === 1) dragHandle = hitCropHandle(canvasPoint(e));
+});
+
+canvas.addEventListener('pointermove', e => {
+  if (!pointers.has(e.pointerId)) return;
+  const prev = pointers.get(e.pointerId);
+  const p = canvasPoint(e);
+  pointers.set(e.pointerId, p);
+
+  if (cropping) {
+    if (pointers.size === 1 && dragHandle) {
+      const { k } = cropLayout();
+      applyCropDrag(dragHandle, (p.x - prev.x) / k, (p.y - prev.y) / k);
+      draw();
+    }
+    return;
+  }
+
+  if (pointers.size === 1) {
+    pos.x += p.x - prev.x;
+    pos.y += p.y - prev.y;
+    draw();
+  } else if (pointers.size === 2) {
+    const pts = [...pointers.values()];
+    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    if (canvas._pinchDist) {
+      const f = dist / canvas._pinchDist;
+      drawW *= f; drawH *= f;
+      syncInputs();
+      draw();
+    }
+    canvas._pinchDist = dist;
+  }
+});
+
+['pointerup','pointercancel'].forEach(ev => canvas.addEventListener(ev, e => {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) canvas._pinchDist = null;
+  if (pointers.size === 0) { canvas.classList.remove('dragging'); dragHandle = null; }
+}));
+
+canvas.addEventListener('wheel', e => {
+  if (!img || cropping) return;
+  e.preventDefault();
+  const f = Math.exp(-e.deltaY * 0.0015);
+  drawW *= f; drawH *= f;
+  syncInputs();
+  draw();
+}, { passive: false });
+
+/* ===== Export ===== */
+$('downloadBtn').onclick = () => {
+  const c = document.createElement('canvas');
+  c.width = CONFIG.width;
+  c.height = CONFIG.height;
+  const x = c.getContext('2d');
+  x.save();
+  circlePath(x);
+  x.clip();
+  const bg = $('bgSel').value;
+  if (bg !== 'transparent') { x.fillStyle = bg; x.fill(); }
+  drawLogo(x);
+  if (templateImg) x.drawImage(templateImg, 0, 0, CONFIG.width, CONFIG.height);
+  x.restore();
+  c.toBlob(blob => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = imgName + '-voucher.png';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }, 'image/png');
+};
+
+draw();
+</script>
+</body>
+</html>
