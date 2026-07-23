@@ -128,9 +128,6 @@
     font-family: inherit;
   }
   #placeBar { display: flex; flex-direction: column; gap: 16px; }
-  #cropBar { display: none; }
-  body.cropping #placeBar { display: none; }
-  body.cropping #cropBar { display: flex; flex-direction: column; gap: 16px; }
   @media (max-width: 760px) {
     .wrap { flex-direction: column; }
     .panel { max-width: none; width: 100%; }
@@ -159,12 +156,10 @@
     <div id="placeBar">
       <div class="row">
         <button id="uploadBtn" class="primary">Upload logo</button>
-        <button id="cropBtn" disabled>Crop</button>
       </div>
 
       <div>
         <h2>Size</h2>
-        <input type="range" id="scale" min="5" max="300" value="100" step="1" disabled>
         <div class="row" style="margin-top:10px">
           <div>
             <label class="small" for="wIn">Width (px)</label>
@@ -186,8 +181,9 @@
           <button id="centerBtn" disabled>Center</button>
           <button id="fitBtn" disabled>Fit</button>
           <button id="fillBtn" disabled>Fill circle</button>
+          <button id="resetCropBtn" disabled>Reset crop</button>
         </div>
-        <p class="hint" style="margin-top:8px">Drag the logo to move it. Pinch or use the slider to resize. Faded areas outside the circle will be cut off.</p>
+        <p class="hint" style="margin-top:8px">Drag the corner squares to resize. Drag the edge bars to crop that side — drag them back outward to undo. Drag anywhere inside to move. Faded areas outside the circle will be cut off.</p>
       </div>
 
       <div>
@@ -201,16 +197,6 @@
 
       <div class="divider"></div>
       <button id="downloadBtn" class="primary" disabled>Download PNG</button>
-    </div>
-
-    <div id="cropBar">
-      <h2>Crop image</h2>
-      <p class="hint">Drag the corners or edges of the box to crop. Drag inside the box to move it.</p>
-      <div class="row">
-        <button id="cropApply" class="primary">Apply crop</button>
-        <button id="cropReset">Reset</button>
-        <button id="cropCancel">Cancel</button>
-      </div>
     </div>
   </div>
 </div>
@@ -247,11 +233,9 @@ let img = null, imgName = 'logo';
 let crop = { x: 0, y: 0, w: 0, h: 0 };       // source-pixel crop of the uploaded image
 let pos = { x: CONFIG.circle.cx, y: CONFIG.circle.cy }; // centre of the logo in output px
 let drawW = 0, drawH = 0;                     // logo size in output px
-let cropping = false;
-let tcrop = null;                             // crop rect being edited in crop mode
 
 const $ = id => document.getElementById(id);
-const controls = ['scale','wIn','hIn','cropBtn','centerBtn','fitBtn','fillBtn','downloadBtn'];
+const controls = ['wIn','hIn','centerBtn','fitBtn','fillBtn','resetCropBtn','downloadBtn'];
 
 function circlePath(c) {
   c.beginPath();
@@ -273,7 +257,6 @@ function setScalePercent(v) {
 function syncInputs() {
   $('wIn').value = Math.round(drawW);
   $('hIn').value = Math.round(drawH);
-  $('scale').value = Math.min(300, Math.max(5, Math.round(drawW / fitScaleW() * 100)));
 }
 
 /* ===== Drawing ===== */
@@ -292,7 +275,6 @@ function drawLogo(c) {
 }
 
 function draw() {
-  if (cropping) { drawCropMode(); return; }
   ctx.clearRect(0, 0, CONFIG.width, CONFIG.height);
   drawChecker(ctx);
 
@@ -318,77 +300,114 @@ function draw() {
   ctx.setLineDash([16, 12]);
   ctx.stroke();
   ctx.restore();
+
+  if (img) drawPlaceHandles();
 }
 
-/* ===== Crop mode ===== */
-function cropLayout() {
-  const pad = 90;
-  const k = Math.min((CONFIG.width - pad * 2) / img.naturalWidth,
-                     (CONFIG.height - pad * 2) / img.naturalHeight);
+/* ===== Resize + crop handles drawn on the placed image =====
+   Corner squares: resize. Edge bars: crop that side (drag back out to undo).
+   Sizes are in canvas px (canvas is 1080 wide, displayed smaller). */
+const CORNER = 28, EDGE_LONG = 60, EDGE_THICK = 14, HIT = 44;
+
+function imgRect() {
   return {
-    k,
-    ox: (CONFIG.width - img.naturalWidth * k) / 2,
-    oy: (CONFIG.height - img.naturalHeight * k) / 2
+    L: pos.x - drawW / 2, T: pos.y - drawH / 2,
+    R: pos.x + drawW / 2, B: pos.y + drawH / 2
   };
 }
 
-function drawCropMode() {
-  const { k, ox, oy } = cropLayout();
-  ctx.clearRect(0, 0, CONFIG.width, CONFIG.height);
-  ctx.fillStyle = '#141a20';
-  ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
-  ctx.drawImage(img, ox, oy, img.naturalWidth * k, img.naturalHeight * k);
-
-  const rx = ox + tcrop.x * k, ry = oy + tcrop.y * k, rw = tcrop.w * k, rh = tcrop.h * k;
+function drawPlaceHandles() {
+  const { L, T, R, B } = imgRect();
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, 0, CONFIG.width, CONFIG.height);
-  ctx.rect(rx, ry, rw, rh);
-  ctx.fillStyle = 'rgba(0,0,0,.55)';
-  ctx.fill('evenodd');
-  ctx.restore();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = 'rgba(255,255,255,.85)';
+  ctx.lineWidth = 2.5;
+  ctx.strokeRect(L, T, R - L, B - T);
 
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 3;
-  ctx.strokeRect(rx, ry, rw, rh);
   ctx.fillStyle = '#fff';
-  for (const [hx, hy] of cropHandles(rx, ry, rw, rh))
-    ctx.fillRect(hx - 14, hy - 14, 28, 28);
-}
-
-function cropHandles(rx, ry, rw, rh) {
-  return [
-    [rx, ry], [rx + rw / 2, ry], [rx + rw, ry],
-    [rx, ry + rh / 2], [rx + rw, ry + rh / 2],
-    [rx, ry + rh], [rx + rw / 2, ry + rh], [rx + rw, ry + rh]
+  ctx.strokeStyle = 'rgba(0,0,0,.45)';
+  ctx.lineWidth = 2;
+  for (const [x, y] of [[L, T], [R, T], [L, B], [R, B]]) {
+    ctx.fillRect(x - CORNER / 2, y - CORNER / 2, CORNER, CORNER);
+    ctx.strokeRect(x - CORNER / 2, y - CORNER / 2, CORNER, CORNER);
+  }
+  const bars = [
+    [(L + R) / 2, T, EDGE_LONG, EDGE_THICK], [(L + R) / 2, B, EDGE_LONG, EDGE_THICK],
+    [L, (T + B) / 2, EDGE_THICK, EDGE_LONG], [R, (T + B) / 2, EDGE_THICK, EDGE_LONG]
   ];
-}
-const HANDLE_KEYS = ['nw','n','ne','w','e','sw','s','se'];
-
-function hitCropHandle(p) {
-  const { k, ox, oy } = cropLayout();
-  const rx = ox + tcrop.x * k, ry = oy + tcrop.y * k, rw = tcrop.w * k, rh = tcrop.h * k;
-  const hs = cropHandles(rx, ry, rw, rh);
-  for (let i = 0; i < hs.length; i++) {
-    if (Math.abs(p.x - hs[i][0]) < 34 && Math.abs(p.y - hs[i][1]) < 34) return HANDLE_KEYS[i];
+  for (const [x, y, w, h] of bars) {
+    if (ctx.roundRect) {
+      ctx.beginPath();
+      ctx.roundRect(x - w / 2, y - h / 2, w, h, 7);
+      ctx.fill(); ctx.stroke();
+    } else {
+      ctx.fillRect(x - w / 2, y - h / 2, w, h);
+      ctx.strokeRect(x - w / 2, y - h / 2, w, h);
+    }
   }
-  if (p.x > rx && p.x < rx + rw && p.y > ry && p.y < ry + rh) return 'move';
-  return null;
+  ctx.restore();
 }
 
-function applyCropDrag(handle, dxImg, dyImg) {
-  const W = img.naturalWidth, H = img.naturalHeight, MIN = 12;
-  let { x, y, w, h } = tcrop;
-  if (handle === 'move') {
-    x = Math.min(Math.max(0, x + dxImg), W - w);
-    y = Math.min(Math.max(0, y + dyImg), H - h);
-  } else {
-    if (handle.includes('w')) { const nx = Math.min(Math.max(0, x + dxImg), x + w - MIN); w += x - nx; x = nx; }
-    if (handle.includes('e')) { w = Math.min(Math.max(MIN, w + dxImg), W - x); }
-    if (handle.includes('n')) { const ny = Math.min(Math.max(0, y + dyImg), y + h - MIN); h += y - ny; y = ny; }
-    if (handle.includes('s')) { h = Math.min(Math.max(MIN, h + dyImg), H - y); }
+function hitPlaceHandle(p) {
+  const { L, T, R, B } = imgRect();
+  const cx = (L + R) / 2, cy = (T + B) / 2;
+  const near = (x, y) => Math.abs(p.x - x) < HIT && Math.abs(p.y - y) < HIT;
+  if (near(L, T)) return 'nw';
+  if (near(R, T)) return 'ne';
+  if (near(L, B)) return 'sw';
+  if (near(R, B)) return 'se';
+  if (near(cx, T)) return 'n';
+  if (near(cx, B)) return 's';
+  if (near(L, cy)) return 'w';
+  if (near(R, cy)) return 'e';
+  return 'move';                 // anywhere else drags the logo around
+}
+
+function cornerResize(h, p) {
+  const ax = h.includes('w') ? drag.pos0.x + drag.w0 / 2 : drag.pos0.x - drag.w0 / 2;
+  const ay = h.includes('n') ? drag.pos0.y + drag.h0 / 2 : drag.pos0.y - drag.h0 / 2;
+  const dirX = h.includes('w') ? -1 : 1;
+  const dirY = h.includes('n') ? -1 : 1;
+  let w = Math.max(12, (p.x - ax) * dirX);
+  let hh = Math.max(12, (p.y - ay) * dirY);
+  if ($('lock').checked) {
+    const f = Math.max(w / drag.w0, hh / drag.h0);
+    w = drag.w0 * f;
+    hh = drag.h0 * f;
   }
-  tcrop = { x, y, w, h };
+  drawW = w; drawH = hh;
+  pos.x = ax + dirX * w / 2;     // opposite corner stays pinned
+  pos.y = ay + dirY * hh / 2;
+}
+
+function edgeCrop(h, p) {
+  const MIN = 12;                // min crop size in source px
+  const sx = drag.w0 / drag.crop0.w, sy = drag.h0 / drag.crop0.h;
+  const L0 = drag.pos0.x - drag.w0 / 2, R0 = drag.pos0.x + drag.w0 / 2;
+  const T0 = drag.pos0.y - drag.h0 / 2, B0 = drag.pos0.y + drag.h0 / 2;
+  if (h === 'e') {
+    const wSrc = Math.min(Math.max(MIN, (p.x - L0) / sx), img.naturalWidth - drag.crop0.x);
+    crop = { ...drag.crop0, w: wSrc };
+    drawW = wSrc * sx;
+    pos.x = L0 + drawW / 2;
+  } else if (h === 'w') {
+    const right = drag.crop0.x + drag.crop0.w;
+    const xSrc = Math.min(Math.max(0, drag.crop0.x + (p.x - L0) / sx), right - MIN);
+    crop = { ...drag.crop0, x: xSrc, w: right - xSrc };
+    drawW = crop.w * sx;
+    pos.x = R0 - drawW / 2;
+  } else if (h === 's') {
+    const hSrc = Math.min(Math.max(MIN, (p.y - T0) / sy), img.naturalHeight - drag.crop0.y);
+    crop = { ...drag.crop0, h: hSrc };
+    drawH = hSrc * sy;
+    pos.y = T0 + drawH / 2;
+  } else if (h === 'n') {
+    const bottom = drag.crop0.y + drag.crop0.h;
+    const ySrc = Math.min(Math.max(0, drag.crop0.y + (p.y - T0) / sy), bottom - MIN);
+    crop = { ...drag.crop0, y: ySrc, h: bottom - ySrc };
+    drawH = crop.h * sy;
+    pos.y = B0 - drawH / 2;
+  }
 }
 
 /* ===== Image loading ===== */
@@ -425,7 +444,6 @@ document.addEventListener('paste', e => {
 });
 
 /* ===== Controls ===== */
-$('scale').oninput = e => { setScalePercent(+e.target.value); syncInputs(); draw(); };
 $('wIn').onchange = e => {
   const v = Math.max(1, +e.target.value || 1);
   if ($('lock').checked) drawH = v * drawH / drawW;
@@ -451,31 +469,18 @@ $('fillBtn').onclick = () => {
 };
 $('bgSel').onchange = draw;
 
-$('cropBtn').onclick = () => {
-  cropping = true;
-  tcrop = { ...crop };
-  document.body.classList.add('cropping');
-  draw();
-};
-function exitCrop() {
-  cropping = false;
-  document.body.classList.remove('cropping');
-  draw();
-}
-$('cropCancel').onclick = exitCrop;
-$('cropReset').onclick = () => { tcrop = { x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight }; draw(); };
-$('cropApply').onclick = () => {
-  crop = { ...tcrop };
-  const pct = +$('scale').value;
-  drawH = drawW * crop.h / crop.w;   // re-derive aspect from the new crop
-  setScalePercent(pct);
-  exitCrop();
+$('resetCropBtn').onclick = () => {
+  const sx = drawW / crop.w, sy = drawH / crop.h;   // keep on-screen scale
+  crop = { x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight };
+  drawW = crop.w * sx;
+  drawH = crop.h * sy;
   syncInputs();
+  draw();
 };
 
 /* ===== Pointer interaction ===== */
 const pointers = new Map();
-let dragHandle = null;
+let drag = null;   // { handle, pos0, w0, h0, crop0 }
 
 function canvasPoint(e) {
   const r = canvas.getBoundingClientRect();
@@ -488,9 +493,19 @@ function canvasPoint(e) {
 canvas.addEventListener('pointerdown', e => {
   if (!img) return;
   canvas.setPointerCapture(e.pointerId);
-  pointers.set(e.pointerId, canvasPoint(e));
+  const p = canvasPoint(e);
+  pointers.set(e.pointerId, p);
   canvas.classList.add('dragging');
-  if (cropping && pointers.size === 1) dragHandle = hitCropHandle(canvasPoint(e));
+  if (pointers.size === 1) {
+    drag = {
+      handle: hitPlaceHandle(p),
+      pos0: { ...pos },
+      w0: drawW, h0: drawH,
+      crop0: { ...crop }
+    };
+  } else {
+    drag = null;   // second finger down: switch to pinch
+  }
 });
 
 canvas.addEventListener('pointermove', e => {
@@ -499,20 +514,7 @@ canvas.addEventListener('pointermove', e => {
   const p = canvasPoint(e);
   pointers.set(e.pointerId, p);
 
-  if (cropping) {
-    if (pointers.size === 1 && dragHandle) {
-      const { k } = cropLayout();
-      applyCropDrag(dragHandle, (p.x - prev.x) / k, (p.y - prev.y) / k);
-      draw();
-    }
-    return;
-  }
-
-  if (pointers.size === 1) {
-    pos.x += p.x - prev.x;
-    pos.y += p.y - prev.y;
-    draw();
-  } else if (pointers.size === 2) {
+  if (pointers.size === 2) {
     const pts = [...pointers.values()];
     const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
     if (canvas._pinchDist) {
@@ -522,17 +524,30 @@ canvas.addEventListener('pointermove', e => {
       draw();
     }
     canvas._pinchDist = dist;
+    return;
   }
+
+  if (!drag) return;
+  if (drag.handle === 'move') {
+    pos.x += p.x - prev.x;
+    pos.y += p.y - prev.y;
+  } else if (drag.handle.length === 2) {
+    cornerResize(drag.handle, p);
+  } else {
+    edgeCrop(drag.handle, p);
+  }
+  syncInputs();
+  draw();
 });
 
 ['pointerup','pointercancel'].forEach(ev => canvas.addEventListener(ev, e => {
   pointers.delete(e.pointerId);
   if (pointers.size < 2) canvas._pinchDist = null;
-  if (pointers.size === 0) { canvas.classList.remove('dragging'); dragHandle = null; }
+  if (pointers.size === 0) { canvas.classList.remove('dragging'); drag = null; }
 }));
 
 canvas.addEventListener('wheel', e => {
-  if (!img || cropping) return;
+  if (!img) return;
   e.preventDefault();
   const f = Math.exp(-e.deltaY * 0.0015);
   drawW *= f; drawH *= f;
