@@ -368,16 +368,14 @@ function cornerResize(h, p) {
   const ay = h.includes('n') ? drag.pos0.y + drag.h0 / 2 : drag.pos0.y - drag.h0 / 2;
   const dirX = h.includes('w') ? -1 : 1;
   const dirY = h.includes('n') ? -1 : 1;
-  let w = Math.max(12, (p.x - ax) * dirX);
-  let hh = Math.max(12, (p.y - ay) * dirY);
-  if ($('lock').checked) {
-    const f = Math.max(w / drag.w0, hh / drag.h0);
-    w = drag.w0 * f;
-    hh = drag.h0 * f;
-  }
-  drawW = w; drawH = hh;
-  pos.x = ax + dirX * w / 2;     // opposite corner stays pinned
-  pos.y = ay + dirY * hh / 2;
+  // corners always resize proportionally; the aspect ratio never changes here
+  const w = Math.max(12, (p.x - ax) * dirX);
+  const hh = Math.max(12, (p.y - ay) * dirY);
+  const f = Math.max(w / drag.w0, hh / drag.h0);
+  drawW = drag.w0 * f;
+  drawH = drag.h0 * f;
+  pos.x = ax + dirX * drawW / 2;     // opposite corner stays pinned
+  pos.y = ay + dirY * drawH / 2;
 }
 
 function edgeCrop(h, p) {
