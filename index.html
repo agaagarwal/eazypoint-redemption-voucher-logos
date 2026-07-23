@@ -160,14 +160,14 @@
       </svg>
       <span><b>Tap to upload</b> or drag &amp; drop a logo here<br>PNG, JPG, SVG or WEBP</span>
     </div>
+    <div class="row" style="margin-top:14px; justify-content:center">
+      <button id="uploadBtn" class="primary">Upload logo</button>
+    </div>
+    <p class="hint" style="margin-top:8px; text-align:center">Drag anywhere inside to move. Faded areas outside the circle will be cut off.</p>
   </div>
 
   <div class="panel">
     <div id="placeBar">
-      <div class="row">
-        <button id="uploadBtn" class="primary">Upload logo</button>
-      </div>
-
       <div>
         <h2>Size</h2>
         <div class="row" style="margin-top:10px">
@@ -203,7 +203,6 @@
           <button id="resetCropBtn" disabled>Reset crop</button>
           <button id="resetAllBtn" disabled>Reset image</button>
         </div>
-        <p class="hint" style="margin-top:8px">Drag anywhere inside to move. Faded areas outside the circle will be cut off.</p>
       </div>
 
       <div>
@@ -262,6 +261,7 @@ let drawW = 0, drawH = 0;                     // logo size in output px
 let mode = 'resize';                          // 'resize' or 'crop' — controls what the corner handles do
 let picking = false;                          // true while waiting for a click to sample a color
 let sampleCanvas = null;                      // offscreen full-res copy of the logo, for color sampling
+let hovering = false;                         // true while the pointer rests over the logo — shows the border/handles
 
 let initial = null; // snapshot of crop/pos/size right after upload, for "Reset image"
 
@@ -339,7 +339,7 @@ function draw() {
   ctx.stroke();
   ctx.restore();
 
-  if (img) drawPlaceHandles();
+  if (img && (hovering || drag)) drawPlaceHandles();
 }
 
 /* ===== Resize + crop handles drawn on the placed image =====
@@ -619,6 +619,21 @@ function canvasPoint(e) {
     y: (e.clientY - r.top) * canvas.height / r.height
   };
 }
+
+function pointNearImage(p) {
+  const { L, T, R, B } = imgRect();
+  const pad = HIT / 2;
+  return p.x >= L - pad && p.x <= R + pad && p.y >= T - pad && p.y <= B + pad;
+}
+
+canvas.addEventListener('pointermove', e => {
+  if (!img || drag) return;               // an active drag already keeps handles visible and redraws
+  const now = pointNearImage(canvasPoint(e));
+  if (now !== hovering) { hovering = now; draw(); }
+});
+canvas.addEventListener('pointerleave', () => {
+  if (hovering) { hovering = false; draw(); }
+});
 
 canvas.addEventListener('pointerdown', e => {
   if (!img) return;
